@@ -184,12 +184,4 @@ mvn test -Dtest=MatrixSimulationTest
 mvn jacoco:report
 ```
 
-## 📝 Posibles Mejoras
 
-- Algoritmos de pathfinding más avanzados (A*)
-- Interfaz gráfica con JavaFX
-- Configuración dinámica del tamaño de matriz
-- Más estrategias de movimiento
-- Métricas y estadísticas de rendimiento
-- Tests de integración y rendimiento
-- Configuración externa con archivos properties
