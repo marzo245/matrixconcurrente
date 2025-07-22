@@ -32,99 +32,126 @@ public class MatrixSimulationApp implements SimulationObserver {
     simulation = new MatrixSimulation();
     simulation.addObserver(this);
 
+    // Forzar visualización simple sin animación
+    simulation.setAnimatedDisplay(false);
+
     // Mostrar estado inicial
     System.out.println("Estado inicial:");
     simulation.displayMatrix();
 
-    // Configurar velocidades de movimiento (en milisegundos)
-    int neonSpeed = 800; // Neón se mueve cada 800ms
-    int agentSpeed = 1000; // Agentes se mueven cada 1000ms
-    int displaySpeed = 500; // Actualizar pantalla cada 500ms
-
-    // Crear pool de hilos
-    executorService =
-      Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r);
-        t.setDaemon(true);
-        return t;
-      });
-
-    // Crear y lanzar hilos de entidades
-    NeonThread neonThread = new NeonThread(simulation, neonSpeed);
-    executorService.submit(neonThread);
-
-    // Crear hilos de agentes con diferentes velocidades
-    for (int i = 0; i < simulation.getAgentPositions().size(); i++) {
-      AgentThread agentThread = new AgentThread(
-        simulation,
-        i,
-        agentSpeed + (i * 100)
-      );
-      executorService.submit(agentThread);
+    // Dar tiempo al usuario para ver el estado inicial
+    System.out.println("La simulación comenzará en 3 segundos...");
+    System.out.println(
+      "MODO: Turnos sincronizados - todos se mueven, luego se muestra"
+    );
+    try {
+      Thread.sleep(3000);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
     }
 
-    // Hilo para mostrar el estado de la matriz
-    executorService.submit(() -> {
-      while (simulation.isSimulationRunning()) {
+    // NUEVA LÓGICA: Simulación por turnos sincronizados
+    runTurnBasedSimulation();
+  }
+
+  /**
+   * Ejecuta la simulación por turnos sincronizados sin pausas de tiempo
+   */
+  private void runTurnBasedSimulation() {
+    int turnNumber = 1;
+
+    System.out.println("\n🎮 INICIANDO SIMULACIÓN POR TURNOS SINCRONIZADOS 🎮");
+    System.out.println(
+      "Cada turno: Neón se mueve → Agentes se mueven → Se muestra resultado"
+    );
+    System.out.println("Presiona Ctrl+C para detener\n");
+
+    // Hilo para detectar entrada del usuario (opcional)
+    Thread inputThread = new Thread(() -> {
+      Scanner scanner = new Scanner(System.in);
+      scanner.nextLine(); // Esperar ENTER
+      simulation.stopSimulation();
+      scanner.close();
+    });
+    inputThread.setDaemon(true);
+    inputThread.start();
+
+    while (simulation.isSimulationRunning()) {
+      System.out.println("┌" + "─".repeat(48) + "┐");
+      System.out.println(
+        "│🔄 TURNO #" + String.format("%-38s", turnNumber) + "│"
+      );
+      System.out.println("└" + "─".repeat(48) + "┘");
+
+      // 1. Mover el Neón
+      System.out.println("🔵 Neón hace su movimiento...");
+      simulation.moveNeon();
+
+      if (!simulation.isSimulationRunning()) {
+        System.out.println("🎯 ¡El Neón llegó al Teletransporte!");
+        break; // El neón llegó al teletransporte
+      }
+
+      // 2. Mover todos los agentes uno por uno
+      System.out.println("🔴 Agentes hacen sus movimientos...");
+      for (int i = 0; i < simulation.getAgentPositions().size(); i++) {
+        System.out.println("   → Agente " + (i + 1) + " se mueve");
+        simulation.moveAgent(i);
+        if (!simulation.isSimulationRunning()) {
+          System.out.println("💥 ¡Agente " + (i + 1) + " capturó al Neón!");
+          break; // Un agente capturó al neón
+        }
+      }
+
+      if (!simulation.isSimulationRunning()) {
+        break;
+      }
+
+      // 3. Mostrar estado actualizado después de que todos se movieron
+      System.out.println("📊 Resultado del turno " + turnNumber + ":");
+      simulation.displayMatrix();
+
+      turnNumber++;
+
+      // 4. Pausa de 5 segundos entre turnos para mejor visualización
+      if (simulation.isSimulationRunning()) {
+        System.out.println(
+          "⏱️  Esperando 5 segundos hasta el próximo turno..."
+        );
+        System.out.println("    (Presiona Ctrl+C para terminar)");
         try {
-          Thread.sleep(displaySpeed);
-          simulation.displayMatrix();
+          Thread.sleep(5000); // 5 segundos de pausa
         } catch (InterruptedException e) {
+          System.out.println("\n⚠️  Simulación interrumpida por el usuario");
+          simulation.stopSimulation();
           Thread.currentThread().interrupt();
           break;
         }
       }
-    });
 
-    // Hilo para entrada del usuario
-    executorService.submit(() -> {
-      Scanner scanner = new Scanner(System.in);
-      System.out.println(
-        "Presiona ENTER en cualquier momento para terminar la simulación..."
-      );
-      scanner.nextLine();
-      simulation.stopSimulation();
-      scanner.close();
-    });
-
-    // Esperar a que termine la simulación
-    waitForCompletion();
+      System.out.println(); // Línea en blanco para separar turnos
+    }
 
     // Mostrar estado final
-    System.out.println("\n=== SIMULACIÓN TERMINADA ===");
+    System.out.println("\n" + "═".repeat(60));
+    System.out.println(
+      "🏁 SIMULACIÓN TERMINADA DESPUÉS DE " + (turnNumber - 1) + " TURNOS"
+    );
+    System.out.println("═".repeat(60));
     simulation.displayMatrix();
 
-    System.out.println("¡Gracias por usar el simulador!");
-    logger.info("Aplicación terminada correctamente");
+    logger.info(
+      "Aplicación terminada correctamente después de {} turnos",
+      turnNumber - 1
+    );
   }
 
-  private void waitForCompletion() {
-    try {
-      // Esperar hasta que la simulación termine
-      while (simulation.isSimulationRunning()) {
-        Thread.sleep(100);
-      }
-
-      // Dar tiempo para que todos los hilos terminen
-      Thread.sleep(1000);
-
-      // Cerrar el pool de hilos
-      executorService.shutdown();
-      if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
-        logger.warn("Algunos hilos no terminaron a tiempo, forzando cierre");
-        executorService.shutdownNow();
-      }
-    } catch (InterruptedException e) {
-      logger.error("Simulación interrumpida", e);
-      simulation.stopSimulation();
-      executorService.shutdownNow();
-      Thread.currentThread().interrupt();
-    }
-  }
+  // Ya no necesitamos waitForCompletion() en modo por turnos
+  // private void waitForCompletion() { ... }
 
   private void printWelcomeMessage() {
     System.out.println("=".repeat(50));
-    System.out.println("    SIMULACIÓN DE MATRIZ CONCURRENTE 8x8");
+    System.out.println("    SIMULACIÓN DE MATRIZ CONCURRENTE 12x12");
     System.out.println("=".repeat(50));
     System.out.println("Neón (N) intenta llegar al Teletransporte (T)");
     System.out.println("Los Agentes (A) intentan capturar al Neón");
@@ -135,7 +162,7 @@ public class MatrixSimulationApp implements SimulationObserver {
 
   @Override
   public void onSimulationEvent(String message) {
-    logger.info("Evento de simulación: {}", message);
+    logger.debug("Evento de simulación: {}", message);
     if (message.contains("GANADO") || message.contains("terminada")) {
       System.out.println("\n*** " + message + " ***");
     }

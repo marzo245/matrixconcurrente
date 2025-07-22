@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.locks.ReentrantLock;
+import javax.swing.text.html.parser.Entity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -24,7 +25,7 @@ public class MatrixSimulation {
   private static final Logger logger = LoggerFactory.getLogger(
     MatrixSimulation.class
   );
-  private static final int MATRIX_SIZE = 8;
+  private static final int MATRIX_SIZE = 12; // Aumentado de 8 a 12 para más espacio
 
   private EntityType[][] matrix;
   private Position neonPos;
@@ -34,6 +35,10 @@ public class MatrixSimulation {
   private final ReentrantLock matrixLock;
   private final MovementStrategy movementStrategy;
   private final List<SimulationObserver> observers;
+  private final long startTime; // Tiempo de inicio de la simulación
+
+  // Variable para controlar el tipo de visualización
+  private boolean useAnimatedDisplay = true;
 
   public MatrixSimulation() {
     this(new ManhattanMovementStrategy());
@@ -46,8 +51,9 @@ public class MatrixSimulation {
     this.movementStrategy = movementStrategy;
     this.observers = new ArrayList<>();
     this.simulationRunning = true;
+    this.startTime = System.currentTimeMillis(); // Inicializar tiempo de inicio
     initializeMatrix();
-    logger.info(
+    logger.debug(
       "Simulación inicializada con matriz {}x{}",
       MATRIX_SIZE,
       MATRIX_SIZE
@@ -56,6 +62,7 @@ public class MatrixSimulation {
 
   /**
    * Inicializa la matriz con obstáculos, neón, agentes y teletransporte
+   * Con lógica mejorada para evitar que el neón aparezca cerca de agentes
    */
   private void initializeMatrix() {
     // Llenar matriz con espacios vacíos
@@ -65,29 +72,130 @@ public class MatrixSimulation {
       }
     }
 
-    // Colocar obstáculos aleatoriamente (aproximadamente 15% de la matriz)
-    int obstacleCount = (MATRIX_SIZE * MATRIX_SIZE) / 7;
+    // Colocar obstáculos aleatoriamente (aproximadamente 15% de la matriz para más desafío)
+    int obstacleCount = (MATRIX_SIZE * MATRIX_SIZE) / 6; // Más obstáculos para mapa más grande
     for (int i = 0; i < obstacleCount; i++) {
       Position pos = getRandomEmptyPosition();
       matrix[pos.getX()][pos.getY()] = EntityType.OBSTACLE;
     }
 
-    // Colocar teletransporte
-    teleportPos = getRandomEmptyPosition();
+    // Colocar teletransporte en una esquina aleatoria, asegurando que no coincida con la posición de Neón
+    Position[] corners = {
+      new Position(0, 0),
+      new Position(0, MATRIX_SIZE - 1),
+      new Position(MATRIX_SIZE - 1, 0),
+      new Position(MATRIX_SIZE - 1, MATRIX_SIZE - 1),
+    };
+    int neonX = 0; // fila deseada
+    int neonY = 11; // columna deseada
+    Position neonFixedPos = new Position(neonX, neonY);
+    do {
+      teleportPos =
+        corners[ThreadLocalRandom.current().nextInt(corners.length)];
+    } while (teleportPos.equals(neonFixedPos));
     matrix[teleportPos.getX()][teleportPos.getY()] = EntityType.TELEPORT;
 
-    // Colocar neón
-    neonPos = getRandomEmptyPosition();
+    // Colocar neón SIEMPRE en una posición fija específica
+    neonPos = neonFixedPos;
     matrix[neonPos.getX()][neonPos.getY()] = EntityType.NEON;
 
-    // Colocar agentes (al menos 3)
-    for (int i = 0; i < 3; i++) {
+    // Colocar agentes en posiciones completamente aleatorias
+    int agentCount = Math.min(
+      7,
+      Math.max(
+        1,
+        System.getProperty("agent.count") != null
+          ? Integer.parseInt(System.getProperty("agent.count"))
+          : 3
+      )
+    );
+    for (int i = 0; i < agentCount; i++) {
       Position agentPos = getRandomEmptyPosition();
       agentPositions.add(agentPos);
       matrix[agentPos.getX()][agentPos.getY()] = EntityType.AGENT;
     }
 
+    // Colocar neón asegurando distancia mínima de agentes (al menos 4 casillas)
+
     notifyObservers("Matriz inicializada");
+  }
+
+  /**
+   * Encuentra una posición para el neón que esté alejada de los agentes
+   */
+  private Position findPositionAwayFromAgents(int minDistance) {
+    int maxAttempts = 100;
+    int attempts = 0;
+
+    while (attempts < maxAttempts) {
+      Position candidate = getRandomEmptyPosition();
+      boolean validPosition = true;
+
+      // Verificar distancia a todos los agentes
+      for (Position agentPos : agentPositions) {
+        if (candidate.manhattanDistance(agentPos) < minDistance) {
+          validPosition = false;
+          break;
+        }
+      }
+
+      // También verificar distancia al teletransporte (no demasiado cerca)
+      if (validPosition && candidate.manhattanDistance(teleportPos) >= 4) {
+        return candidate;
+      }
+
+      attempts++;
+    }
+
+    // Si no encuentra una posición óptima, usar la esquina más alejada de agentes
+    Position bestPosition = null;
+    int maxMinDistance = 0;
+
+    Position[] fallbackPositions = {
+      new Position(0, 0),
+      new Position(0, MATRIX_SIZE - 1),
+      new Position(MATRIX_SIZE - 1, 0),
+      new Position(MATRIX_SIZE - 1, MATRIX_SIZE - 1),
+    };
+
+    for (Position pos : fallbackPositions) {
+      if (matrix[pos.getX()][pos.getY()] == EntityType.EMPTY) {
+        int minDistanceToAgents = Integer.MAX_VALUE;
+        for (Position agentPos : agentPositions) {
+          minDistanceToAgents =
+            Math.min(minDistanceToAgents, pos.manhattanDistance(agentPos));
+        }
+        if (minDistanceToAgents > maxMinDistance) {
+          maxMinDistance = minDistanceToAgents;
+          bestPosition = pos;
+        }
+      }
+    }
+
+    return bestPosition != null ? bestPosition : getRandomEmptyPosition();
+  }
+
+  /**
+   * Encuentra una posición vacía cerca de la posición dada
+   */
+  private Position findNearbyEmptyPosition(Position center) {
+    for (int radius = 1; radius < MATRIX_SIZE; radius++) {
+      for (int dx = -radius; dx <= radius; dx++) {
+        for (int dy = -radius; dy <= radius; dy++) {
+          int newX = center.getX() + dx;
+          int newY = center.getY() + dy;
+          if (
+            newX >= 0 && newX < MATRIX_SIZE && newY >= 0 && newY < MATRIX_SIZE
+          ) {
+            if (matrix[newX][newY] == EntityType.EMPTY) {
+              return new Position(newX, newY);
+            }
+          }
+        }
+      }
+    }
+    // Si no encuentra ninguna, usar el método original
+    return getRandomEmptyPosition();
   }
 
   /**
@@ -116,7 +224,8 @@ public class MatrixSimulation {
       Position newPos = movementStrategy.calculateNextMove(
         neonPos,
         teleportPos,
-        matrix
+        matrix,
+        agentPositions
       );
 
       // Si la nueva posición es diferente y válida
@@ -130,7 +239,7 @@ public class MatrixSimulation {
 
         // Verificar si llegó al teletransporte
         if (newPos.equals(teleportPos)) {
-          logger.info("¡NEÓN HA LLEGADO AL TELETRANSPORTE!");
+          logger.debug("¡NEÓN HA LLEGADO AL TELETRANSPORTE!");
           simulationRunning = false;
           notifyObservers("¡NEÓN HA GANADO!");
           return;
@@ -164,7 +273,8 @@ public class MatrixSimulation {
       Position newPos = movementStrategy.calculateNextMove(
         agentPos,
         neonPos,
-        matrix
+        matrix,
+        agentPositions
       );
 
       // Si la nueva posición es diferente y válida
@@ -175,7 +285,7 @@ public class MatrixSimulation {
       ) {
         // Verificar si capturó al neón
         if (newPos.equals(neonPos)) {
-          logger.info("¡AGENTE {} HA CAPTURADO AL NEÓN!", agentIndex + 1);
+          logger.debug("¡AGENTE {} HA CAPTURADO AL NEÓN!", agentIndex + 1);
           simulationRunning = false;
           notifyObservers("¡AGENTE " + (agentIndex + 1) + " HA GANADO!");
           return;
@@ -215,23 +325,291 @@ public class MatrixSimulation {
   }
 
   /**
-   * Muestra el estado actual de la matriz
+   * Configurar si usar visualización animada o simple
+   */
+  public void setAnimatedDisplay(boolean animated) {
+    this.useAnimatedDisplay = animated;
+  }
+
+  /**
+   * Método principal de visualización que elige entre animada o simple
    */
   public void displayMatrix() {
+    if (useAnimatedDisplay) {
+      displayMatrixAnimated();
+    } else {
+      displayMatrixSimple();
+    }
+  }
+
+  /**
+   * Muestra el estado actual de la matriz con animación secuencial
+   */
+  private void displayMatrixAnimated() {
     matrixLock.lock();
     try {
-      System.out.println("\n=== ESTADO ACTUAL DE LA MATRIZ ===");
+      // Limpiar pantalla para actualización en vivo
+      clearScreen();
+
+      System.out.println(
+        "╔════════════════════════════════════════════════════╗"
+      );
+      System.out.println(
+        "║            MATRIZ CONCURRENTE 12x12 - EN VIVO     ║"
+      );
+      System.out.println(
+        "╚════════════════════════════════════════════════════╝"
+      );
+      System.out.println();
+
+      // Mostrar encabezado de columnas
+      System.out.print("   "); // Espacio extra para números de fila de dos dígitos
+      for (int j = 0; j < MATRIX_SIZE; j++) {
+        System.out.printf("%2d ", j); // Formato de 2 caracteres para columnas
+      }
+      System.out.println();
+
+      // Mostrar matriz completa sin pausas para visualización en vivo
       for (int i = 0; i < MATRIX_SIZE; i++) {
+        System.out.printf("%2d ", i); // Formato de 2 caracteres para filas
+        for (int j = 0; j < MATRIX_SIZE; j++) {
+          String symbol = String.valueOf(matrix[i][j].getSymbol());
+          // Añadir colores para mejor visualización
+          System.out.print(getColoredSymbol(symbol) + " ");
+        }
+        System.out.println();
+      }
+
+      System.out.println();
+      System.out.println(
+        "🔵 N=Neón  🔴 A=Agente  ⭐ T=Teletransporte  ⬛ #=Obstáculo  ⬜ .=Vacío"
+      );
+      System.out.println("═".repeat(60));
+
+      // Mostrar estadísticas básicas
+      showGameStats();
+
+      System.out.println("═".repeat(60));
+      System.out.println("Presiona ENTER para terminar la simulación");
+
+      // Forzar que se muestre inmediatamente
+      System.out.flush();
+    } finally {
+      matrixLock.unlock();
+    }
+  }
+
+  /**
+   * Versión simple de displayMatrix sin animación (para terminales que no soporten colores)
+   */
+  public void displayMatrixSimple() {
+    matrixLock.lock();
+    try {
+      System.out.println("\n" + "=".repeat(50));
+      System.out.println("         MATRIZ CONCURRENTE 12x12");
+      System.out.println("=".repeat(50));
+
+      // Mostrar encabezado de columnas
+      System.out.print("   "); // Espacio extra para números de fila de dos dígitos
+      for (int j = 0; j < MATRIX_SIZE; j++) {
+        System.out.printf("%2d ", j); // Formato de 2 caracteres
+      }
+      System.out.println();
+
+      // Mostrar matriz
+      for (int i = 0; i < MATRIX_SIZE; i++) {
+        System.out.printf("%2d ", i); // Formato de 2 caracteres para filas
         for (int j = 0; j < MATRIX_SIZE; j++) {
           System.out.print(matrix[i][j].getSymbol() + " ");
         }
         System.out.println();
       }
-      System.out.println("N=Neón, A=Agente, T=Teletransporte, #=Obstáculo");
-      System.out.println("=====================================\n");
+
+      System.out.println();
+      System.out.println(
+        "N=Neón, A=Agente, T=Teletransporte, #=Obstáculo, .=Vacío"
+      );
+      System.out.println("=".repeat(40));
+
+      // Estadísticas básicas
+      long currentTime = System.currentTimeMillis();
+      long elapsedSeconds = (currentTime - startTime) / 1000;
+      int distance = neonPos.manhattanDistance(teleportPos);
+
+      System.out.println(
+        "Tiempo: " +
+        elapsedSeconds +
+        "s | Distancia: " +
+        distance +
+        " | Agentes: " +
+        agentPositions.size()
+      );
+      System.out.println();
     } finally {
       matrixLock.unlock();
     }
+  }
+
+  /**
+   * Método de visualización que se puede llamar desde dentro de un lock
+   */
+  private void displayMatrixWithoutLock() {
+    if (useAnimatedDisplay) {
+      displayMatrixAnimatedWithoutLock();
+    } else {
+      displayMatrixSimpleWithoutLock();
+    }
+  }
+
+  /**
+   * Versión sin lock del método animado
+   */
+  private void displayMatrixAnimatedWithoutLock() {
+    // Separador visual sin limpiar pantalla agresivamente
+    System.out.println("\n" + "═".repeat(40));
+
+    System.out.println("╔════════════════════════════════════════╗");
+    System.out.println("║     MATRIZ CONCURRENTE 12x12          ║");
+    System.out.println("╚════════════════════════════════════════╝");
+    System.out.println();
+
+    // Mostrar encabezado de columnas
+    System.out.print("   ");
+    for (int j = 0; j < MATRIX_SIZE; j++) {
+      System.out.printf("%2d ", j);
+    }
+    System.out.println();
+
+    // Mostrar matriz (sin pausa para movimientos rápidos)
+    for (int i = 0; i < MATRIX_SIZE; i++) {
+      System.out.printf("%2d ", i);
+      for (int j = 0; j < MATRIX_SIZE; j++) {
+        String symbol = String.valueOf(matrix[i][j].getSymbol());
+        System.out.print(getColoredSymbol(symbol) + " ");
+      }
+      System.out.println();
+    }
+
+    System.out.println();
+    System.out.println(
+      "🔵 N=Neón  🔴 A=Agente  ⭐ T=Teletransporte  ⬛ #=Obstáculo  ⬜ .=Vacío"
+    );
+    System.out.println("═".repeat(40));
+
+    // Mostrar estadísticas básicas
+    showGameStats();
+  }
+
+  /**
+   * Versión sin lock del método simple
+   */
+  private void displayMatrixSimpleWithoutLock() {
+    System.out.println("\n" + "=".repeat(40));
+    System.out.println("    MATRIZ CONCURRENTE 12x12");
+    System.out.println("=".repeat(40));
+
+    // Mostrar encabezado de columnas
+    System.out.print("   ");
+    for (int j = 0; j < MATRIX_SIZE; j++) {
+      System.out.printf("%2d ", j);
+    }
+    System.out.println();
+
+    // Mostrar matriz
+    for (int i = 0; i < MATRIX_SIZE; i++) {
+      System.out.printf("%2d ", i);
+      for (int j = 0; j < MATRIX_SIZE; j++) {
+        System.out.print(matrix[i][j].getSymbol() + " ");
+      }
+      System.out.println();
+    }
+
+    System.out.println();
+    System.out.println(
+      "N=Neón, A=Agente, T=Teletransporte, #=Obstáculo, .=Vacío"
+    );
+    System.out.println("=".repeat(40));
+
+    // Estadísticas básicas
+    long currentTime = System.currentTimeMillis();
+    long elapsedSeconds = (currentTime - startTime) / 1000;
+    int distance = neonPos.manhattanDistance(teleportPos);
+
+    System.out.println(
+      "Tiempo: " +
+      elapsedSeconds +
+      "s | Distancia: " +
+      distance +
+      " | Agentes: " +
+      agentPositions.size()
+    );
+    System.out.println();
+  }
+
+  /**
+   * Limpia la pantalla completamente para visualización en vivo
+   */
+  private void clearScreen() {
+    try {
+      // Para Windows
+      if (System.getProperty("os.name").toLowerCase().contains("windows")) {
+        new ProcessBuilder("cmd", "/c", "cls").inheritIO().start().waitFor();
+      } else {
+        // Para Unix/Linux/Mac - Limpieza completa
+        System.out.print("\033[2J"); // Limpiar pantalla completa
+        System.out.print("\033[H"); // Mover cursor a la esquina superior izquierda
+        System.out.flush();
+      }
+    } catch (Exception e) {
+      // Fallback: múltiples líneas en blanco
+      for (int i = 0; i < 100; i++) {
+        System.out.println();
+      }
+    }
+  }
+
+  /**
+   * Añade colores a los símbolos para mejor visualización
+   */
+  private String getColoredSymbol(String symbol) {
+    switch (symbol) {
+      case "N":
+        return "\033[34m" + symbol + "\033[0m"; // Azul para Neón
+      case "A":
+        return "\033[31m" + symbol + "\033[0m"; // Rojo para Agente
+      case "T":
+        return "\033[33m" + symbol + "\033[0m"; // Amarillo para Teletransporte
+      case "#":
+        return "\033[90m" + symbol + "\033[0m"; // Gris para Obstáculo
+      default:
+        return symbol; // Sin color para espacios vacíos
+    }
+  }
+
+  /**
+   * Muestra estadísticas básicas del juego
+   */
+  private void showGameStats() {
+    long currentTime = System.currentTimeMillis();
+    long elapsedSeconds = (currentTime - startTime) / 1000;
+
+    System.out.println("⏱️  Tiempo transcurrido: " + elapsedSeconds + "s");
+    System.out.println(
+      "🎯 Neón en: (" + neonPos.getX() + ", " + neonPos.getY() + ")"
+    );
+    System.out.println(
+      "🚀 Teletransporte en: (" +
+      teleportPos.getX() +
+      ", " +
+      teleportPos.getY() +
+      ")"
+    );
+
+    // Calcular distancia Manhattan del neón al teletransporte
+    int distance = neonPos.manhattanDistance(teleportPos);
+    System.out.println("📏 Distancia al objetivo: " + distance + " pasos");
+
+    System.out.println("👥 Agentes activos: " + agentPositions.size());
   }
 
   // Observer Pattern methods
@@ -256,7 +634,7 @@ public class MatrixSimulation {
 
   public void stopSimulation() {
     simulationRunning = false;
-    logger.info("Simulación detenida manualmente");
+    logger.debug("Simulación detenida manualmente");
     notifyObservers("Simulación detenida");
   }
 

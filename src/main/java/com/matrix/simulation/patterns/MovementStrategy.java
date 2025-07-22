@@ -10,6 +10,7 @@ public interface MovementStrategy {
   Position calculateNextMove(
     Position currentPos,
     Position targetPos,
-    EntityType[][] matrix
+    EntityType[][] matrix,
+    java.util.List<Position> agentPositions
   );
 }

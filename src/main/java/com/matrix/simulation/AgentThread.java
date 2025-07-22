@@ -30,7 +30,7 @@ public class AgentThread extends Thread {
 
   @Override
   public void run() {
-    logger.info(
+    logger.debug(
       "Hilo del Agente {} iniciado con delay de {}ms",
       agentIndex + 1,
       moveDelay
@@ -41,12 +41,12 @@ public class AgentThread extends Thread {
         simulation.moveAgent(agentIndex);
         Thread.sleep(moveDelay);
       } catch (InterruptedException e) {
-        logger.info("Hilo del Agente {} interrumpido", agentIndex + 1);
+        logger.debug("Hilo del Agente {} interrumpido", agentIndex + 1);
         Thread.currentThread().interrupt();
         break;
       }
     }
 
-    logger.info("Hilo del Agente {} terminado", agentIndex + 1);
+    logger.debug("Hilo del Agente {} terminado", agentIndex + 1);
   }
 }

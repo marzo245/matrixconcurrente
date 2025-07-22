@@ -24,19 +24,19 @@ public class NeonThread extends Thread {
 
   @Override
   public void run() {
-    logger.info("Hilo del Neón iniciado con delay de {}ms", moveDelay);
+    logger.debug("Hilo del Neón iniciado con delay de {}ms", moveDelay);
 
     while (simulation.isSimulationRunning()) {
       try {
         simulation.moveNeon();
         Thread.sleep(moveDelay);
       } catch (InterruptedException e) {
-        logger.info("Hilo del Neón interrumpido");
+        logger.debug("Hilo del Neón interrumpido");
         Thread.currentThread().interrupt();
         break;
       }
     }
 
-    logger.info("Hilo del Neón terminado");
+    logger.debug("Hilo del Neón terminado");
   }
 }
